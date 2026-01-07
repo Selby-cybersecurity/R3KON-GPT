@@ -2647,31 +2647,41 @@ def serve_favicon():
 
 @app.route('/api/chat/stream', methods=['POST'])
 def chat_stream():
-    # Wait for the model to be loaded if it's not already
+    # Wait for the model to be loaded if it's not already, but with timeout
     if not model_loaded:
         print("[WAITING] Model not loaded yet, waiting for model_loaded_event...")
-        model_loaded_event.wait()
-        print("[CONTINUING] Model is now loaded.")
-
+        # Wait for model with timeout
+        model_loaded_success = model_loaded_event.wait(timeout=120)  # 2 minute timeout
+        
+        if not model_loaded_success or not model_loaded:
+            print("[ERROR] Model loading timeout or failed")
+            return jsonify({"error": "Model is still loading or failed to load. Please try again in a moment."}), 503  # Service Unavailable
+    
     try:
         data = request.json
+        if not data:
+            return jsonify({"error": "No JSON data provided"}), 400
+            
         message = data.get('message', '')
         config = data.get('config', {})
         history = data.get('history', [])
         
         if not message:
-            return jsonify({"error": "No message"}), 400
+            return jsonify({"error": "No message provided"}), 400
         
         return Response(
             generate_response_stream(message, config, history),
             mimetype='text/event-stream',
             headers={
                 'Cache-Control': 'no-cache',
-                'X-Accel-Buffering': 'no'
+                'X-Accel-Buffering': 'no',
+                'Connection': 'keep-alive'
             }
         )
     except Exception as e:
         print(f"Error in chat stream: {e}")
+        import traceback
+        traceback.print_exc()
         return jsonify({"error": str(e)}), 500
 
 @app.route('/api/stop', methods=['POST'])
